@@ -71,16 +71,21 @@
 #define UART3_RX_PIN            PB11
 #define UART3_TX_PIN            PB10
 
+#define USE_UART5
+#define UART5_RX_PIN            PD2
+#define UART5_TX_PIN            PC12
+
 #define USE_UART6
 #define UART6_RX_PIN            PC7
 #define UART6_TX_PIN            PC6
 
-#define SERIAL_PORT_COUNT       4
+#define SERIAL_PORT_COUNT       5
 
 #define DEFAULT_RX_TYPE         RX_TYPE_SERIAL
 #define SERIALRX_PROVIDER       SERIALRX_GHST
 #define SERIALRX_UART           SERIAL_PORT_USART1
 
+// *************** I2C ****************************
 #define USE_I2C
 #define USE_I2C_DEVICE_1
 #define I2C1_SCL                PB6
@@ -116,15 +121,14 @@
 // *************** ADC *****************************
 #define USE_ADC
 #define ADC_INSTANCE                ADC1
-#define ADC1_DMA_STREAM             DMA2_Stream0
+#define ADC1_DMA_STREAM             DMA2_Stream4
 #define ADC_CHANNEL_1_PIN           PC1
+#define ADC_CHANNEL_2_PIN           PC3
 
 #define VBAT_ADC_CHANNEL            ADC_CHN_1
 #define CURRENT_METER_ADC_CHANNEL   ADC_CHN_2
-#define RSSI_ADC_CHANNEL            ADC_CHN_3
 
 #define DEFAULT_FEATURES        (FEATURE_OSD | FEATURE_CURRENT_METER | FEATURE_VBAT | FEATURE_TELEMETRY )
-#define CURRENT_METER_SCALE   179
 
 // *************** PINIO ***************************
 #define USE_PINIO
