@@ -310,6 +310,7 @@ static const blackboxDeltaFieldDefinition_t blackboxMainFields[] = {
     {"accSmooth",   0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
     {"accSmooth",   1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
     {"accSmooth",   2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
+    {"accVib",     -1, UNSIGNED, .Ipredict = PREDICT(0),       .Iencode = ENCODING(UNSIGNED_VB), .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ACC},
     {"attitude",    0, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ATTITUDE},
     {"attitude",    1, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ATTITUDE},
     {"attitude",    2, SIGNED,   .Ipredict = PREDICT(0),       .Iencode = ENCODING(SIGNED_VB),   .Ppredict = PREDICT(AVERAGE_2),     .Pencode = ENCODING(SIGNED_VB), FLIGHT_LOG_FIELD_CONDITION_ATTITUDE},
@@ -401,12 +402,21 @@ static const blackboxSimpleFieldDefinition_t blackboxGpsHFields[] = {
 
 // Rarely-updated fields
 static const blackboxSimpleFieldDefinition_t blackboxSlowFields[] = {
+    /* "flightModeFlags" renamed internally to more correct ref of rcModeFlags, since it logs rc boxmode selections,
+     * but name kept for external compatibility reasons.
+     * "activeFlightModeFlags" logs actual active flight modes rather than rc boxmodes.
+     * 'active' should at least distinguish it from the existing "flightModeFlags" */
+     
+    {"activeWpNumber",        -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
     {"flightModeFlags",       -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
+    {"flightModeFlags2",      -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
+    {"activeFlightModeFlags", -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
     {"stateFlags",            -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
 
     {"failsafePhase",         -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
     {"rxSignalReceived",      -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
     {"rxFlightChannelsValid", -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
+    {"rxUpdateRate",          -1, UNSIGNED, PREDICT(PREVIOUS),      ENCODING(UNSIGNED_VB)},
 
     {"hwHealthStatus",        -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
     {"powerSupplyImpedance",  -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
@@ -435,7 +445,6 @@ static const blackboxSimpleFieldDefinition_t blackboxSlowFields[] = {
     {"escRPM",                -1, UNSIGNED, PREDICT(0),             ENCODING(UNSIGNED_VB)},
     {"escTemperature",        -1, SIGNED,   PREDICT(PREVIOUS),      ENCODING(SIGNED_VB)},
 #endif
-    {"rxUpdateRate",          -1, UNSIGNED, PREDICT(PREVIOUS),      ENCODING(UNSIGNED_VB)},
 };
 
 typedef enum BlackboxState {
@@ -487,6 +496,7 @@ typedef struct blackboxMainState_s {
     int16_t gyroPeaksYaw[DYN_NOTCH_PEAK_COUNT];
 
     int16_t accADC[XYZ_AXIS_COUNT];
+    int16_t accVib;
     int16_t attitude[XYZ_AXIS_COUNT];
     int32_t debug[DEBUG32_VALUE_COUNT];
     int16_t motor[MAX_SUPPORTED_MOTORS];
@@ -530,7 +540,9 @@ typedef struct blackboxGpsState_s {
 
 // This data is updated really infrequently:
 typedef struct blackboxSlowState_s {
-    uint32_t flightModeFlags; // extend this data size (from uint16_t)
+    uint32_t rcModeFlags;
+    uint32_t rcModeFlags2;
+    uint32_t activeFlightModeFlags;
     uint32_t stateFlags;
     uint8_t failsafePhase;
     bool rxSignalReceived;
@@ -554,6 +566,7 @@ typedef struct blackboxSlowState_s {
     int8_t escTemperature;
 #endif
     uint16_t rxUpdateRate;
+    uint8_t activeWpNumber;
 } __attribute__((__packed__)) blackboxSlowState_t; // We pack this struct so that padding doesn't interfere with memcmp()
 
 //From rc_controls.c
@@ -562,7 +575,7 @@ extern boxBitmask_t rcModeActivationMask;
 static BlackboxState blackboxState = BLACKBOX_STATE_DISABLED;
 
 static uint32_t blackboxLastArmingBeep = 0;
-static uint32_t blackboxLastFlightModeFlags = 0;
+static uint32_t blackboxLastRcModeFlags = 0;
 
 static struct {
     uint32_t headerIndex;
@@ -917,6 +930,7 @@ static void writeIntraframe(void)
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ACC)) {
         blackboxWriteSigned16VBArray(blackboxCurrent->accADC, XYZ_AXIS_COUNT);
+        blackboxWriteUnsignedVB(blackboxCurrent->accVib);
     }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ATTITUDE)) {
@@ -1182,6 +1196,7 @@ static void writeInterframe(void)
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ACC)) {
         blackboxWriteArrayUsingAveragePredictor16(offsetof(blackboxMainState_t, accADC), XYZ_AXIS_COUNT);
+        blackboxWriteSignedVB(blackboxCurrent->accVib - blackboxLast->accVib);
     }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_ATTITUDE)) {
@@ -1254,7 +1269,10 @@ static void writeSlowFrame(void)
 
     blackboxWrite('S');
 
-    blackboxWriteUnsignedVB(slowHistory.flightModeFlags);
+    blackboxWriteUnsignedVB(slowHistory.activeWpNumber);
+    blackboxWriteUnsignedVB(slowHistory.rcModeFlags);
+    blackboxWriteUnsignedVB(slowHistory.rcModeFlags2);
+    blackboxWriteUnsignedVB(slowHistory.activeFlightModeFlags);
     blackboxWriteUnsignedVB(slowHistory.stateFlags);
 
     /*
@@ -1264,6 +1282,8 @@ static void writeSlowFrame(void)
     values[1] = slowHistory.rxSignalReceived ? 1 : 0;
     values[2] = slowHistory.rxFlightChannelsValid ? 1 : 0;
     blackboxWriteTag2_3S32(values);
+
+    blackboxWriteUnsignedVB(slowHistory.rxUpdateRate);
 
     blackboxWriteUnsignedVB(slowHistory.hwHealthStatus);
 
@@ -1290,7 +1310,6 @@ static void writeSlowFrame(void)
     blackboxWriteUnsignedVB(slowHistory.escRPM);
     blackboxWriteSignedVB(slowHistory.escTemperature);
 #endif
-    blackboxWriteUnsignedVB(slowHistory.rxUpdateRate);
 
     blackboxSlowFrameIterationTimer = 0;
 }
@@ -1300,21 +1319,21 @@ static void writeSlowFrame(void)
  */
 static void loadSlowState(blackboxSlowState_t *slow)
 {
-    memcpy(&slow->flightModeFlags, &rcModeActivationMask, sizeof(slow->flightModeFlags)); //was flightModeFlags;
-    // Also log Nav auto selected flight modes rather than just those selected by boxmode
-    if (!IS_RC_MODE_ACTIVE(BOXANGLE) && FLIGHT_MODE(ANGLE_MODE)) {
-        slow->flightModeFlags |= (1 << BOXANGLE);
-    }
+    slow->activeWpNumber = getActiveWpNumber();
+
+    slow->rcModeFlags = rcModeActivationMask.bits[0];   // first 32 bits of boxId_e
+    slow->rcModeFlags2 = rcModeActivationMask.bits[1];  // remaining bits of boxId_e
+
+    // Also log Nav auto enabled flight modes rather than just those selected by boxmode
     if (navigationGetHeadingControlState() == NAV_HEADING_CONTROL_AUTO) {
-        slow->flightModeFlags |= (1 << BOXHEADINGHOLD);
+        slow->rcModeFlags |= (1 << BOXHEADINGHOLD);
     }
-    if (navigationRequiresTurnAssistance()) {
-        slow->flightModeFlags |= (1 << BOXTURNASSIST);
-    }
+    slow->activeFlightModeFlags = flightModeFlags;
     slow->stateFlags = stateFlags;
     slow->failsafePhase = failsafePhase();
     slow->rxSignalReceived = rxIsReceivingSignal();
     slow->rxFlightChannelsValid = rxAreFlightChannelsValid();
+    slow->rxUpdateRate = getRcUpdateFrequency();
     slow->hwHealthStatus = (getHwGyroStatus()           << 2 * 0) |     // Pack hardware health status into a bit field.
                            (getHwAccelerometerStatus()  << 2 * 1) |     // Use raw hardwareSensorStatus_e values and pack them using 2 bits per value
                            (getHwCompassStatus()        << 2 * 2) |     // Report GYRO in 2 lowest bits, then ACC, COMPASS, BARO, GPS, RANGEFINDER and PITOT
@@ -1366,8 +1385,6 @@ static void loadSlowState(blackboxSlowState_t *slow)
     slow->escRPM = escSensor->rpm;
     slow->escTemperature = escSensor->temperature;
 #endif
-
-    slow->rxUpdateRate = getRcUpdateFrequency();
 }
 
 /**
@@ -1484,7 +1501,7 @@ void blackboxStart(void)
      * it finally plays the beep for this arming event.
      */
     blackboxLastArmingBeep = getArmingBeepTimeMicros();
-    memcpy(&blackboxLastFlightModeFlags, &rcModeActivationMask, sizeof(blackboxLastFlightModeFlags)); // record startup status
+    memcpy(&blackboxLastRcModeFlags, &rcModeActivationMask, sizeof(blackboxLastRcModeFlags)); // record startup status
 
     blackboxSetState(BLACKBOX_STATE_PREPARE_LOG_FILE);
 }
@@ -1601,6 +1618,7 @@ static void loadMainState(timeUs_t currentTimeUs)
             blackboxCurrent->mcVelAxisOutput[i] = lrintf(nav_pids->vel[i].output_constrained);
         }
     }
+    blackboxCurrent->accVib = lrintf(accGetVibrationLevel() * acc.dev.acc_1G);
 
     if (STATE(FIXED_WING_LEGACY)) {
 
@@ -1835,9 +1853,9 @@ static bool blackboxWriteSysinfo(void)
         BLACKBOX_PRINT_HEADER_LINE("Craft name", "%s",                      systemConfig()->craftName);
         BLACKBOX_PRINT_HEADER_LINE("P interval", "%u/%u",                   blackboxConfig()->rate_num, blackboxConfig()->rate_denom);
         BLACKBOX_PRINT_HEADER_LINE("minthrottle", "%d",                     getThrottleIdleValue());
-        BLACKBOX_PRINT_HEADER_LINE("maxthrottle", "%d",                     motorConfig()->maxthrottle);
+        BLACKBOX_PRINT_HEADER_LINE("maxthrottle", "%d",                     getMaxThrottle());
         BLACKBOX_PRINT_HEADER_LINE("gyro_scale", "0x%x",                    castFloatBytesToInt(1.0f));
-        BLACKBOX_PRINT_HEADER_LINE("motorOutput", "%d,%d",                  getThrottleIdleValue(),motorConfig()->maxthrottle);
+        BLACKBOX_PRINT_HEADER_LINE("motorOutput", "%d,%d",                  getThrottleIdleValue(),getMaxThrottle());
         BLACKBOX_PRINT_HEADER_LINE("acc_1G", "%u",                          acc.dev.acc_1G);
 
 #ifdef USE_ADC
@@ -1906,9 +1924,8 @@ static bool blackboxWriteSysinfo(void)
         BLACKBOX_PRINT_HEADER_LINE("dterm_lpf_type", "%d",                  pidProfile()->dterm_lpf_type);
         BLACKBOX_PRINT_HEADER_LINE("deadband", "%d",                        rcControlsConfig()->deadband);
         BLACKBOX_PRINT_HEADER_LINE("yaw_deadband", "%d",                    rcControlsConfig()->yaw_deadband);
-        BLACKBOX_PRINT_HEADER_LINE("gyro_lpf", "%d",                        gyroConfig()->gyro_lpf);
+        BLACKBOX_PRINT_HEADER_LINE("gyro_lpf", "%d",                        GYRO_LPF_256HZ);
         BLACKBOX_PRINT_HEADER_LINE("gyro_lpf_hz", "%d",                     gyroConfig()->gyro_main_lpf_hz);
-        BLACKBOX_PRINT_HEADER_LINE("gyro_lpf_type", "%d",                   gyroConfig()->gyro_main_lpf_type);
 #ifdef USE_DYNAMIC_FILTERS
         BLACKBOX_PRINT_HEADER_LINE("dynamicGyroNotchQ", "%d",               gyroConfig()->dynamicGyroNotchQ);
         BLACKBOX_PRINT_HEADER_LINE("dynamicGyroNotchMinHz", "%d",           gyroConfig()->dynamicGyroNotchMinHz);
@@ -1931,8 +1948,6 @@ static bool blackboxWriteSysinfo(void)
         BLACKBOX_PRINT_HEADER_LINE("waypoints", "%d,%d",                    getWaypointCount(),isWaypointListValid());
         BLACKBOX_PRINT_HEADER_LINE("acc_notch_hz", "%d",                    accelerometerConfig()->acc_notch_hz);
         BLACKBOX_PRINT_HEADER_LINE("acc_notch_cutoff", "%d",                accelerometerConfig()->acc_notch_cutoff);
-        BLACKBOX_PRINT_HEADER_LINE("pidSumLimit", "%d",                     pidProfile()->pidSumLimit);
-        BLACKBOX_PRINT_HEADER_LINE("pidSumLimitYaw", "%d",                  pidProfile()->pidSumLimitYaw);
         BLACKBOX_PRINT_HEADER_LINE("axisAccelerationLimitYaw", "%d",        pidProfile()->axisAccelerationLimitYaw);
         BLACKBOX_PRINT_HEADER_LINE("axisAccelerationLimitRollPitch", "%d",  pidProfile()->axisAccelerationLimitRollPitch);
 #ifdef USE_RPM_FILTER
@@ -2011,10 +2026,10 @@ static void blackboxCheckAndLogArmingBeep(void)
 static void blackboxCheckAndLogFlightMode(void)
 {
     // Use != so that we can still detect a change if the counter wraps
-    if (memcmp(&rcModeActivationMask, &blackboxLastFlightModeFlags, sizeof(blackboxLastFlightModeFlags))) {
+    if (memcmp(&rcModeActivationMask, &blackboxLastRcModeFlags, sizeof(blackboxLastRcModeFlags))) {
         flightLogEvent_flightMode_t eventData; // Add new data for current flight mode flags
-        eventData.lastFlags = blackboxLastFlightModeFlags;
-        memcpy(&blackboxLastFlightModeFlags, &rcModeActivationMask, sizeof(blackboxLastFlightModeFlags));
+        eventData.lastFlags = blackboxLastRcModeFlags;
+        memcpy(&blackboxLastRcModeFlags, &rcModeActivationMask, sizeof(blackboxLastRcModeFlags));
         memcpy(&eventData.flags, &rcModeActivationMask, sizeof(eventData.flags));
         blackboxLogEvent(FLIGHT_LOG_EVENT_FLIGHTMODE, (flightLogEventData_t *)&eventData);
     }
